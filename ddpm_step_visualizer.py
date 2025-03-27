@@ -10,7 +10,7 @@ import os
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 64  # pour observer image par image
-MODEL_PATH = 'model_epoch_100.pth'
+MODEL_PATH = 'model_ema_epoch_20.pth'
 SAVE_DIR = 'step_outputs'
 os.makedirs(SAVE_DIR, exist_ok=True)
 

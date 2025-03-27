@@ -22,7 +22,7 @@ def main():
     if DEVICE == 'cuda':
         print('GPU Name:', torch.cuda.get_device_name(0))
     BATCH_SIZE = 64
-    EPOCHS = 20
+    EPOCHS = 100
     LR = 2e-4
 
     # Data Loading
