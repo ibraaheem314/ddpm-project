@@ -1,0 +1,6 @@
+data/
+*.tar.gz
+*.pth
+__pycache__/
+logs/
+step_outputs/
