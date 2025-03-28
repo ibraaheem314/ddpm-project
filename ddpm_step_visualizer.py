@@ -9,7 +9,7 @@ from diffusion import Diffusion
 import os
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-BATCH_SIZE = 64  # pour observer image par image
+BATCH_SIZE = 64  # Plus c'est bas plus y a erreur de reconstruire l'image
 MODEL_PATH = 'model_epoch_100.pth'
 SAVE_DIR = 'step_outputs'
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -51,7 +51,7 @@ with torch.no_grad():
         x_denoised = x
     save_image((x_denoised + 1) / 2, f"{SAVE_DIR}/3_denoised_t{t.item()}.png")
 
-# Affichage
+
 image_paths = [
     f"{SAVE_DIR}/1_original.png",
     f"{SAVE_DIR}/2_noisy_t{t.item()}.png",
