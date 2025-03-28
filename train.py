@@ -22,7 +22,7 @@ def main():
     if DEVICE == 'cuda':
         print('GPU Name:', torch.cuda.get_device_name(0))
     BATCH_SIZE = 64
-    EPOCHS = 100
+    EPOCHS = 5
     LR = 2e-4
 
     # Data Loading
@@ -39,7 +39,7 @@ def main():
     ema_model = copy.deepcopy(model)
     ema_model.eval()
     diffusion = Diffusion(device=DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.Adam(model.parameters())
 
     global_step = 0
 
@@ -76,9 +76,9 @@ def main():
         total_diff += diff
         total_norm += param.data.abs().mean().item()
 
-    print(f"\n📊 Moyenne des écarts absolus entre model et ema_model : {total_diff:.6f}")
-    print(f"📊 Norme moyenne des poids du model : {total_norm:.6f}")
-    print(f"📉 Ratio de différence relative : {(total_diff / total_norm):.4%}")
+    print(f"\n Moyenne des écarts absolus entre model et ema_model : {total_diff:.6f}")
+    print(f" Norme moyenne des poids du model : {total_norm:.6f}")
+    print(f" Ratio de différence relative : {(total_diff / total_norm):.4%}")
 
 
 if __name__ == '__main__':

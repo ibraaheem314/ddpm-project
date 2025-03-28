@@ -1,5 +1,3 @@
-# ddpm_step_visualizer.py
-
 import torch
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
@@ -14,7 +12,7 @@ MODEL_PATH = 'model_epoch_100.pth'
 SAVE_DIR = 'step_outputs'
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Charger une image CIFAR-10
+
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
@@ -23,7 +21,7 @@ dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=
 x0, _ = dataset[10]  # une seule image
 x0 = x0.unsqueeze(0).to(DEVICE)
 
-# Charger le modèle
+
 model = UNet().to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
@@ -35,16 +33,13 @@ t = torch.tensor([100], device=DEVICE)
 
 # Étapes :
 with torch.no_grad():
-    # Étape 1 : image originale
     x_orig = (x0 + 1) / 2
     save_image(x_orig, f"{SAVE_DIR}/1_original.png")
 
-    # Étape 2 : ajout de bruit
     noise = torch.randn_like(x0)
     x_noisy = diffusion.q_sample(x0, t, noise)
     save_image((x_noisy + 1) / 2, f"{SAVE_DIR}/2_noisy_t{t.item()}.png")
 
-    # Étape 3 : débruitage d'un seul pas
     x = x_noisy
     for current_t in reversed(range(t.item())):
         x = diffusion.p_sample(model, x, torch.tensor([current_t], device=DEVICE))
