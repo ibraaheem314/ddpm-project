@@ -20,7 +20,7 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))
 ])
 dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-x0, _ = dataset[0]  # une seule image
+x0, _ = dataset[10]  # une seule image
 x0 = x0.unsqueeze(0).to(DEVICE)
 
 # Charger le modèle
