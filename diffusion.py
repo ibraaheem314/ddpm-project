@@ -1,64 +1,56 @@
-# diffusion.py (Diffusion Process DDPM for CIFAR-10 in PyTorch)
-
 import torch
-import torch.nn.functional as F
-
+import math
 
 class Diffusion:
-    def __init__(self, timesteps=1000, beta_start=1e-4, beta_end=0.02, device='cuda'):
+    def __init__(self, T=1000, beta_schedule="cosine", device="cuda"):
+        self.T = T
         self.device = device
-        self.timesteps = timesteps
+        self.betas = self._get_beta_schedule(beta_schedule).to(self.device)
+        self.alphas = 1 - self.betas
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0).to(self.device)
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1 - self.alphas_cumprod)
 
-        self.betas = torch.linspace(beta_start, beta_end, timesteps, device=device)
-        self.alphas = 1. - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
-
-        # calculations for diffusion q(x_t | x_{t-1}) and others
-        self.sqrt_alphas_cumprod = self.alphas_cumprod.sqrt()
-        self.sqrt_one_minus_alphas_cumprod = (1 - self.alphas_cumprod).sqrt()
-
-        # posterior variance calculation
-        self.posterior_variance = (
-            self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
-        )
-
-    def q_sample(self, x_start, t, noise=None):
-        if noise is None:
-            noise = torch.randn_like(x_start)
-        sqrt_alpha_cumprod_t = self.sqrt_alphas_cumprod[t].view(-1, 1, 1, 1)
-        sqrt_one_minus_alpha_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1, 1)
-        return sqrt_alpha_cumprod_t * x_start + sqrt_one_minus_alpha_cumprod_t * noise
-
-    @torch.no_grad()
-    def p_sample(self, model, x, t):
-        betas_t = self.betas[t].view(-1, 1, 1, 1)
-        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1, 1)
-        sqrt_recip_alphas_t = (1.0 / self.alphas[t].sqrt()).view(-1, 1, 1, 1)
-
-        # Equation 11 in DDPM paper
-        model_mean = sqrt_recip_alphas_t * (
-            x - betas_t / sqrt_one_minus_alphas_cumprod_t * model(x, t)
-        )
-
-        if t[0] == 0:
-            return model_mean
+    def _get_beta_schedule(self, schedule):
+        if schedule == "cosine":
+            betas = self._cosine_beta_schedule()
+        elif schedule == "linear":
+            betas = torch.linspace(1e-4, 0.02, self.T)
         else:
-            posterior_variance_t = self.posterior_variance[t].view(-1, 1, 1, 1)
-            noise = torch.randn_like(x)
-            return model_mean + posterior_variance_t.sqrt() * noise
+            raise ValueError(f"Planification {schedule} non supportée.")
+        return betas
 
-    @torch.no_grad()
-    def p_sample_loop(self, model, shape):
-        device = self.device
+    def _cosine_beta_schedule(self, s=0.008):
+        steps = self.T + 1
+        x = torch.linspace(0, self.T, steps)
+        alphas_cumprod = torch.cos(((x / self.T) + s) / (1 + s) * math.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return torch.clip(betas, 0.0001, 0.9999)
+
+    def forward_process(self, x0, t):
+        noise = torch.randn_like(x0, device=x0.device)
+        sqrt_alpha = self.sqrt_alphas_cumprod[t].to(x0.device)
+        sqrt_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[t].to(x0.device)
+        xt = sqrt_alpha[:, None, None, None] * x0 + sqrt_one_minus_alpha[:, None, None, None] * noise
+        return xt, noise
+
+    def sample(self, model, shape):
+        device = next(model.parameters()).device
         x = torch.randn(shape, device=device)
-        for i in reversed(range(self.timesteps)):
-            t = torch.full((shape[0],), i, device=device, dtype=torch.long)
-            x = self.p_sample(model, x, t)
-        return x
+        for t in range(self.T, 0, -1):
+            t_tensor = torch.full((shape[0],), t, device=device)
+            with torch.no_grad():
+                pred_noise = model(x, t_tensor)
+            x = self._reverse_step(x, pred_noise, t-1)
+        return x.clamp(-1, 1)
 
-    def loss(self, model, x_start, t):
-        noise = torch.randn_like(x_start)
-        x_noisy = self.q_sample(x_start, t, noise)
-        noise_pred = model(x_noisy, t)
-        return F.mse_loss(noise_pred, noise)
+    def _reverse_step(self, x, pred_noise, t_idx):
+        alpha_t = self.alphas[t_idx].to(x.device)
+        alpha_cumprod_t = self.alphas_cumprod[t_idx].to(x.device)
+        beta_t = self.betas[t_idx].to(x.device)
+        
+        x = (x - (1 - alpha_t) / torch.sqrt(1 - alpha_cumprod_t) * pred_noise) / torch.sqrt(alpha_t)
+        if t_idx > 0:
+            x += torch.sqrt(beta_t) * torch.randn_like(x)
+        return x

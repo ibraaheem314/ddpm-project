@@ -1,85 +1,68 @@
-# train.py (Training DDPM on CIFAR-10 in PyTorch)
-
 import torch
 from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 from torchvision.datasets import CIFAR10
-from torchvision import transforms
-import os
-import copy
+from tqdm import tqdm
 from model import UNet
 from diffusion import Diffusion
-from tqdm import tqdm
+import torch.nn.functional as F
 
-@torch.no_grad()
-def update_ema(ema_model, model, decay=0.999):
-    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.data.mul_(decay).add_(param.data, alpha=1 - decay)
+DEVICE = "cuda"
+BATCH_SIZE = 128
+LR = 2e-4
+NUM_EPOCHS = 100
+T = 1000
 
-def main():
-    # Configurations
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print('Using device:', DEVICE)
-    if DEVICE == 'cuda':
-        print('GPU Name:', torch.cuda.get_device_name(0))
-    BATCH_SIZE = 64
-    EPOCHS = 5
-    LR = 2e-4
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalisation pour CIFAR-10 (3 canaux)
+])
+train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    # Data Loading
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+model = UNet(in_channels=3, out_channels=3, image_size=32).to(DEVICE)
+diffusion = Diffusion(T=T, beta_schedule="cosine")
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+scaler = torch.cuda.amp.GradScaler()
 
-    train_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+class EMA:
+    def __init__(self, beta=0.9999):
+        self.beta = beta
+        self.shadow = {}
+    
+    def register(self, model):
+        for name, param in model.named_parameters():
+            self.shadow[name] = param.data.clone()
+    
+    def update(self, model):
+        for name, param in model.named_parameters():
+            self.shadow[name] = self.beta * self.shadow[name] + (1 - self.beta) * param.data
 
-    # Model and Diffusion
-    model = UNet().to(DEVICE)
-    ema_model = copy.deepcopy(model)
-    ema_model.eval()
-    diffusion = Diffusion(device=DEVICE)
-    optimizer = torch.optim.Adam(model.parameters())
+ema = EMA()
+ema.register(model)
 
-    global_step = 0
-
-    # Training Loop
-    for epoch in range(EPOCHS):
-        model.train()
-        pbar = tqdm(train_loader)
-        for images, _ in pbar:
-            images = images.to(DEVICE)
-            t = torch.randint(0, diffusion.timesteps, (images.size(0),), device=DEVICE).long()
-
-            loss = diffusion.loss(model, images, t)
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-
-            update_ema(ema_model, model)
-
-            global_step += 1
-            pbar.set_description(f"Epoch [{epoch+1}/{EPOCHS}] Loss: {loss.item():.4f}")
-
-        # Save checkpoint at the end of the last epoch
-        if epoch + 1 == EPOCHS:
-            torch.save(model.state_dict(), f'model_epoch_{epoch+1}.pth')
-            torch.save(ema_model.state_dict(), f'model_ema_epoch_{epoch+1}.pth')
-            
-        # Comparaison finale entre le modèle entraîné et l'EMA
+for epoch in range(NUM_EPOCHS):
+    model.train()
+    total_loss = 0
+    for x0, _ in tqdm(train_loader):
+        x0 = x0.to(DEVICE)
+        t = torch.randint(1, T+1, (x0.size(0,),), device=DEVICE)
         
-    total_diff = 0.
-    total_norm = 0.
-    for param, ema_param in zip(model.parameters(), ema_model.parameters()):
-        diff = (param.data - ema_param.data).abs().mean().item()
-        total_diff += diff
-        total_norm += param.data.abs().mean().item()
+        xt, noise = diffusion.forward_process(x0, t-1)
+        
+        with torch.autocast(device_type=DEVICE, enabled=True):
+            pred_noise = model(xt, t)
+            loss = F.mse_loss(pred_noise, noise)
+        
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad()
+        
+        ema.update(model)
+        total_loss += loss.item()
+    
+    print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {total_loss / len(train_loader)}")
 
-    print(f"\n Moyenne des écarts absolus entre model et ema_model : {total_diff:.6f}")
-    print(f" Norme moyenne des poids du model : {total_norm:.6f}")
-    print(f" Ratio de différence relative : {(total_diff / total_norm):.4%}")
-
-
-if __name__ == '__main__':
-    main()
+    if (epoch + 1) % 10 == 0:
+        torch.save(model.state_dict(), f"checkpoints/model_epoch_{epoch+1}.pt")
