@@ -1,146 +1,144 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_emb_dim, dropout=0.1):
+    def __init__(self, in_channels, out_channels, t_dim):
         super().__init__()
-        self.norm1 = nn.GroupNorm(32, in_channels)
+        self.group_norm1 = nn.GroupNorm(32, in_channels)
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
-        self.norm2 = nn.GroupNorm(32, out_channels)
+        self.time_mlp = nn.Linear(t_dim, out_channels)
+        self.group_norm2 = nn.GroupNorm(32, out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, out_channels)
-        )
         self.shortcut = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
-        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, t_emb):
-        h = self.conv1(F.silu(self.norm1(x)))
-        h += self.time_mlp(t_emb)[:, :, None, None]
-        h = self.conv2(F.silu(self.norm2(h)))
+    def forward(self, x, t):
+        h = self.conv1(F.silu(self.group_norm1(x)))
+        h += self.time_mlp(F.silu(t))[:, :, None, None]
+        h = self.conv2(F.silu(self.group_norm2(h)))
         return h + self.shortcut(x)
 
 class AttentionBlock(nn.Module):
     def __init__(self, channels, num_heads=4):
         super().__init__()
-        self.norm = nn.GroupNorm(32, channels)
+        self.num_heads = num_heads
+        self.group_norm = nn.GroupNorm(32, channels)
         self.qkv = nn.Conv2d(channels, channels * 3, 1)
         self.proj = nn.Conv2d(channels, channels, 1)
-        self.num_heads = num_heads
 
     def forward(self, x):
         B, C, H, W = x.shape
-        qkv = self.qkv(self.norm(x))
-        qkv = qkv.reshape(B, 3, self.num_heads, C // self.num_heads, H * W)
-        q = qkv[:, 0]  # Shape (B, num_heads, C//num_heads, H*W)
-        k = qkv[:, 1]
-        v = qkv[:, 2]
-        
+        qkv = self.qkv(self.group_norm(x)).reshape(B, 3, self.num_heads, C // self.num_heads, -1)
+        q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]
         scale = (C // self.num_heads) ** -0.5
         attn = torch.einsum('b h d i, b h d j -> b h i j', q, k) * scale
         attn = attn.softmax(dim=-1)
-        out = torch.einsum('b h i j, b h d j -> b h d i', attn, v)
-        out = out.reshape(B, C, H, W)
-        return x + self.proj(out)
+        x = torch.einsum('b h i j, b h d j -> b h d i', attn, v).reshape(B, C, H, W)
+        return x + self.proj(x)
+
+def timestep_embedding(t, channels):
+    half_dim = channels // 2
+    emb = math.log(10000) / (half_dim - 1)
+    emb = torch.exp(torch.arange(half_dim, device=t.device)) * -emb
+    emb = t[:, None] * emb[None, :]
+    return torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
 
 class UNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, image_size=32, channels=128, channels_mult=[1,2,2,4], num_res_blocks=2, num_heads=4):
+    def __init__(self, 
+                 in_channels=3,
+                 out_channels=3,
+                 model_channels=128,
+                 channel_mult=(1, 2, 2, 2),
+                 num_res_blocks=2):
         super().__init__()
-        self.time_dim = channels
-        self.channels = channels
-        self.image_size = image_size
-        self.init_conv = nn.Conv2d(in_channels, channels, 3, padding=1)
-
-        # Encodage temporel
-        self.time_mlp = nn.Sequential(
-            nn.Linear(self.time_dim, self.time_dim),
+        self.model_channels = model_channels
+        
+        # Time embedding
+        self.time_embed = nn.Sequential(
+            nn.Linear(model_channels, model_channels * 4),
             nn.SiLU(),
-            nn.Linear(self.time_dim, self.time_dim))
-
-        # Layers
-        self.downs = nn.ModuleList([])
-        self.ups = nn.ModuleList([])
-        channel_mults = [channels * m for m in channels_mult]
-        for i in range(len(channel_mults)):
+            nn.Linear(model_channels * 4, model_channels))
+        
+        # Encoder
+        self.input_blocks = nn.ModuleList([nn.Conv2d(in_channels, model_channels, 3, padding=1)])
+        channels = model_channels
+        for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
-                in_ch = channel_mults[i-1] if i > 0 else channels
-                self.downs.append(ResidualBlock( in_ch, channel_mults[i], self.time_dim ))
-                self.downs.append(AttentionBlock(channel_mults[i], num_heads=num_heads))
-            if i != len(channel_mults) -1:
-                self.downs.append(nn.AvgPool2d(2))
-
+                layers = [
+                    ResidualBlock(channels, mult * model_channels, model_channels),
+                    AttentionBlock(mult * model_channels)
+                ]
+                self.input_blocks.extend(layers)
+                channels = mult * model_channels
+            if level != len(channel_mult) - 1:
+                self.input_blocks.append(nn.Conv2d(channels, channels, 3, stride=2, padding=1))
+        
         # Bottleneck
-        mid_channels = channel_mults[-1]
-        self.mid_block1 = ResidualBlock(mid_channels, mid_channels, self.time_dim)
-        self.mid_attn = AttentionBlock(mid_channels, num_heads=num_heads)
-        self.mid_block2 = ResidualBlock(mid_channels, mid_channels, self.time_dim)
-
-        # Décodage
-        for i in reversed(range(len(channel_mults))):
-            for _ in range(num_res_blocks + 1):
-                in_ch = channel_mults[i] * 2 if _ < num_res_blocks else channel_mults[i]
-                out_ch = channel_mults[i]
-                self.ups.append(ResidualBlock(in_ch, out_ch, self.time_dim))
-                self.ups.append(AttentionBlock(out_ch, num_heads=num_heads))
-            if i != 0:
-                self.ups.append(nn.Upsample(scale_factor=2, mode='bilinear'))
-
-        self.time_mlp = nn.Sequential(
-            nn.Linear(self.time_dim, self.time_dim),
-            nn.SiLU(),
-            nn.Linear(self.time_dim, self.time_dim)
-        )
-
-    def pos_encoding(self, t, channels):
-        device = t.device
-        half_dim = channels // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emb = t[:, None] * emb[None, :]
-        return torch.cat([emb.sin(), emb.cos()], dim=1)
+        self.middle_block = nn.ModuleList([
+            ResidualBlock(channels, channels, model_channels),
+            AttentionBlock(channels),
+            ResidualBlock(channels, channels, model_channels)
+        ])
+        
+        # Decoder
+        self.output_blocks = nn.ModuleList([])
+        self.skip_connection_flags = []  # Indique si un bloc doit recevoir un skip (True) ou non (False)
+        for level, mult in reversed(list(enumerate(channel_mult))):
+            for i in range(num_res_blocks + 1):
+                in_ch = channels + (mult * model_channels if i == 0 else 0)
+                rb = ResidualBlock(in_ch, mult * model_channels, model_channels)
+                self.output_blocks.append(rb)
+                # On attend un skip connection uniquement pour le premier bloc de chaque niveau
+                self.skip_connection_flags.append(i == 0)
+                if level == 0 and i == num_res_blocks:
+                    attn = AttentionBlock(mult * model_channels)
+                    self.output_blocks.append(attn)
+                    self.skip_connection_flags.append(False)
+                channels = mult * model_channels
+            if level != 0:
+                self.output_blocks.append(
+                    nn.ConvTranspose2d(channels, channels, 3, stride=2, padding=1, output_padding=1)
+                )
+                self.skip_connection_flags.append(False)
+        
+        self.out = nn.Conv2d(model_channels, out_channels, 3, padding=1)
 
     def forward(self, x, t):
-        t = t.float()
-        t_emb = self.pos_encoding(t, self.channels)
-        t_emb = self.time_mlp(t_emb)
-        
-        x = self.init_conv(x)
-        skips = [x]
-
-        # Encoder
-        for layer in self.downs:
-            if isinstance(layer, ResidualBlock):
-                x = layer(x, t_emb)
-            else:
-                x = layer(x)
-            skips.append(x)
-
-        # Bottleneck
-        x = self.mid_block1(x, t_emb)
-        x = self.mid_attn(x)
-        x = self.mid_block2(x, t_emb)
-
-        # Décodage
-        for layer in self.ups:
-            if isinstance(layer, nn.Upsample):
-                x = layer(x)
-            else:
-                # Récupération de la skip connection
-                if isinstance(layer, ResidualBlock):
-                    skip = skips.pop()
-                    x = torch.cat([x, skip], dim=1)  # Fusion des skip connections
-                x = layer(x, t_emb) if isinstance(layer, ResidualBlock) else layer(x)
+        t_embed = self.time_embed(timestep_embedding(t, self.model_channels))
     
-        return self.final_conv(x)
+    # Encodeur : on stocke toutes les sorties
+        skips = []
+        h = x
+        for module in self.input_blocks:
+            if isinstance(module, ResidualBlock):
+                h = module(h, t_embed)
+            else:
+                h = module(h)
+            skips.append(h)
     
-    def pos_encoding(self, t, channels):
-        device = t.device
-        half_dim = channels // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emb = t[:, None] * emb[None, :]
-        emb = torch.cat([emb.sin(), emb.cos()], dim=1)
-        return emb
+    # Bottleneck
+        for module in self.middle_block:
+            if isinstance(module, ResidualBlock):
+                h = module(h, t_embed)
+            else:
+                h = module(h)
+    
+    # Décodeur : pour chaque module qui attend un skip, on sélectionne dans 'skips'
+        for module, use_skip in zip(self.output_blocks, self.skip_connection_flags):
+            if use_skip:
+                found = False
+            # On parcourt la liste des skip connections depuis la fin
+                for idx in range(len(skips) - 1, -1, -1):
+                    if skips[idx].shape[2:] == h.shape[2:]:
+                        h = torch.cat([h, skips.pop(idx)], dim=1)
+                        found = True
+                        break
+                if not found:
+                    raise ValueError("Aucune skip connection avec la bonne résolution n'a été trouvée pour h de taille {}.".format(h.shape[2:]))
+            if isinstance(module, ResidualBlock):
+                h = module(h, t_embed)
+            else:
+                h = module(h)
+    
+        return self.out(h)
