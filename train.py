@@ -17,9 +17,9 @@ def load_config(config_path):
 def main():
     config = load_config("config.yml")
     
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     BATCH_SIZE = config["training"]["batch_size"]
-    LR = config["training"]["learning_rate"]
+    LR = float(config["training"]["learning_rate"])
     EPOCHS = config["training"]["epochs"]
     T = config["diffusion"]["timesteps"]
 
@@ -31,9 +31,11 @@ def main():
     train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    model = UNet(**config["model"]).to(DEVICE)
-    diffusion = Diffusion(T=T, beta_schedule=config["diffusion"]["beta_schedule"])
-
+    model = model = UNet(in_channels=3, out_channels=3, image_size=32,
+    channels=128, channels_mult=[1, 2, 2, 4], num_res_blocks=2, num_heads=4).to(DEVICE)
+    
+    diffusion = Diffusion(T=1000, beta_schedule="cosine", device=DEVICE)
+    
     optimizer = optim.AdamW(model.parameters(), lr=LR)
     scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 

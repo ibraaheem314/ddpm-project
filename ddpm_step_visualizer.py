@@ -79,3 +79,25 @@ xd_np = x_denoised.squeeze().permute(1, 2, 0).cpu().numpy()
 score = ssim(x0_np, xd_np, data_range=1.0, channel_axis=2)
 print(f"MSE : {mse:.6f}")
 print(f"SSIM : {score:.4f}")
+
+
+
+
+
+
+# Ajoutez ces imports :
+from torch_fidelity import calculate_metrics
+
+# Après la génération de x_denoised :
+# Convertissez les tenseurs en numpy arrays
+x0_np = x0.squeeze().permute(1, 2, 0).cpu().numpy()
+x_denoised_np = x_denoised.squeeze().permute(1, 2, 0).cpu().numpy()
+
+# Calculez FID et IS (nécessite un dataset de référence)
+metrics = calculate_metrics(
+    input1=torch.stack([x_denoised.squeeze()]),
+    input2="datasets/cifar10/val",
+    cuda=True
+)
+print(f"FID: {metrics['frechet_inception_distance']:.2f}")
+print(f"Inception Score: {metrics['inception_score_mean']:.2f}")
