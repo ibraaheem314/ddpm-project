@@ -52,6 +52,8 @@ def train():
             total_loss += loss.item()
         
         print(f'Epoch {epoch+1}/{epochs} | Loss: {total_loss/len(loader):.4f}')
+        if (epoch + 1) % 10 == 0:
+            torch.save(model.state_dict(), f"checkpoints/model_epoch_{epoch+1}.pt")
 
 if __name__ == '__main__':
     train()
