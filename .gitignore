@@ -3,3 +3,5 @@ checkpoints/
 
 # Ignorer le dossier de données (CIFAR-10)
 data/
+
+step_ouputs/
