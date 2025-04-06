@@ -1,6 +1,5 @@
+# Ignorer les fichiers de checkpoints
+checkpoints/
+
+# Ignorer le dossier de données (CIFAR-10)
 data/
-*.tar.gz
-*.pth
-__pycache__/
-logs/
-step_outputs/
