@@ -15,9 +15,8 @@ Projet_Generatif/
 ├── diffusion.py            # Processus forward (bruit) et reverse (débruitage)
 ├── model.py                # Définition d’un U-Net léger (1 canal)
 ├── train_MNIST.py          # Script d’entraînement principal
-├── eval_MNIST.py           # Scripts d’évaluation (FID, IS, MSE, SSIM)
-├── vizu_MNIST.py           # Visualisation approfondie du reverse step
-└── step_outputs_mnist/     # Résultats intermédiaires (images, courbes)
+├── eval_MNIST.py           # Scripts d’évaluation (FID, IS, MSE, SSIM) 
+└── vizu_MNIST.py           # Visualisation approfondie du reverse step
 ```
 
 ## Prérequis
