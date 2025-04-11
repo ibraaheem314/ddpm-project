@@ -1,96 +1,109 @@
-# Projet Génératif avec Modèles de Diffusion (DDPM) sur MNIST
+# Projet Génératif avec Diffusion Probabiliste (DDPM) – MNIST
 
-Ce dépôt illustre l’implémentation d’un modèle de diffusion probabiliste (DDPM) pour générer et reconstruire des images MNIST. Il s’inspire des travaux de **Ho et al. (2020)** sur les Denoising Diffusion Probabilistic Models.
+Ce dépôt propose une implémentation d’un modèle de diffusion (Denoising Diffusion Probabilistic Model) pour générer et reconstruire des images MNIST. L’implémentation s’appuie sur l’architecture décrite par Ho et al. (NeurIPS 2020), adaptée aux contraintes matérielles modérées.
 
-## Structure du Projet
+---
+
+## Arborescence du Projet
 
 ```bash
 Projet_Generatif/
-├── checkpoints/            # Sauvegarde des modèles (fichiers .pt)
+├── checkpoints/            # Sauvegarde des checkpoints (fichiers .pt)
 │   ├── mnist_epoch_XX.pt
-├── data/                   # Dossier où le dataset MNIST est téléchargé
+├── data/                   # Dossier où MNIST est téléchargé
 │   └── MNIST/
-├── diffusion.py            # Processus forward/backward (bruitage et débruitage)
-├── model.py                # Définition du U-Net léger
-├── train_MNIST.py          # Script pour entraîner le modèle
-├── eval_MNIST.py           # Évaluation : FID, IS, MSE, SSIM
-├── vizu_MNIST.py           # Visualisations détaillées du reverse process
-└── step_outputs_mnist/     # Images résultantes (exemples bruités/débruités)
+├── diffusion.py            # Processus forward (bruit) et reverse (débruitage)
+├── model.py                # Définition d’un U-Net léger (1 canal)
+├── train_MNIST.py          # Script d’entraînement principal
+├── eval_MNIST.py           # Scripts d’évaluation (FID, IS, MSE, SSIM)
+├── vizu_MNIST.py           # Visualisation approfondie du reverse step
+└── step_outputs_mnist/     # Résultats intermédiaires (images, courbes)
 ```
 
 ## Prérequis
 
-1. **Environnement Python 3.8+** : un environnement virtuel est recommandé.
-2. **GPU avec CUDA** : idéalement 8 Go de VRAM pour des batch size raisonnables.
-3. **Bibliothèques** :
-   - `torch`, `torchvision`, `tqdm`
-   - `numpy`, `matplotlib`, `scikit-image` (pour le calcul SSIM)
-   - `torch_fidelity` (pour FID/IS)
-4. Installation rapide :
-   ```bash
-   pip install torch torchvision numpy matplotlib scikit-image torch_fidelity tqdm
-   ```
+1. **Environnement Python 3.8+** (idéalement).
+2. **GPU CUDA** (8 Go de VRAM recommandé).
+3. **Bibliothèques** : `torch`, `torchvision`, `numpy`, `matplotlib`, `scikit-image`, `torch_fidelity`, `tqdm`.
 
-## Scripts et Fonctionnalités
+Installation express :
+```bash
+pip install torch torchvision numpy matplotlib scikit-image torch_fidelity tqdm
+```
 
-### 1. `model.py`
-Définit l’architecture **U-Net** simplifiée :
-- Entrées et sorties unicanales pour MNIST.
-- Blocs résiduels (`ResidualBlock`) et éventuelle attention.
-- Paramètres configurables (channel_mult, model_channels, etc.).
+---
 
-### 2. `diffusion.py`
-- Implémente le **processus de diffusion** (ajout progressif de bruit) et le **reverse process** (débruitage) façon DDPM.
-- Plusieurs paramètres : `T=1000`, `beta_schedule='cosine'`, etc.
-- La fonction `_reverse_step` suit la postérieure gaussienne indiquée par Ho et al.
+## Scripts Principaux
 
-### 3. `train_MNIST.py`
-- Charge MNIST (version train), normalise en `[ -1, 1 ]`.
-- Définit un U-Net léger (64 ou 128 canaux) + l’objet Diffusion.
-- Entraîne sur un certain nombre d’époques (ex. 100), calcule la loss MSE.
-- Sauvegarde périodiquement le modèle dans `checkpoints/`.
+### `model.py`
+- Définit un **U-Net** spécialement conçu pour MNIST (monocanal).
+- Inclus des blocs résiduels (`ResidualBlock`) et éventuellement un bloc d’attention.
+- Paramétrable (nombre de canaux, `channel_mult`, etc.).
 
-**Lancement** :
+### `diffusion.py`
+- Gère la **logique de diffusion** (forward : ajout progressif de bruit) et le **reverse** (débruitage).
+- Utilise la planification de bruitage cosinus (`beta_schedule='cosine'`) et un `_reverse_step` fidèle à la formulation Ho et al.
+
+### `train_MNIST.py`
+- Charge MNIST (train), normalise en `[ -1, 1 ]`.
+- Met en place l’entraînement :
+  - Création d’un U-Net léger.
+  - Boucle sur `T=1000` étapes de diffusion.
+  - Optimiseur AdamW.
+- Sauvegarde des checkpoints dans `checkpoints/`.
+
+**Exemple d’utilisation** :
 ```bash
 python train_MNIST.py
 ```
 
-### 4. `eval_MNIST.py`
-- Évalue la performance du modèle sur MNIST (test) en générant un lot d’images.
-- Calcule **FID** et **Inception Score** via `torch_fidelity`.
-- Peut aussi mesurer MSE/SSIM en comparant des images débruitées à leur version originale.
+### `eval_MNIST.py`
+- Évalue les checkpoints sauvegardés :
+  - Génère un batch d’images via `diffusion.sample(...)`.
+  - Calcule la **FID** et l’**Inception Score** via `torch_fidelity`.
+  - Possibilité de mesurer la **MSE** et la **SSIM** directement.
 
-**Lancement** :
+**Exemple d’utilisation** :
 ```bash
 python eval_MNIST.py
 ```
 
-### 5. `vizu_MNIST.py`
-- Permet d’examiner le reverse process étape par étape :
-  1. Bruite une image MNIST en `$t`.
-  2. Débruite itérativement de `$t` jusqu’à 0.
-- Trace la **MSE** et la **SSIM** à chaque sous-étape.
-- Sauvegarde les images (original, bruitée, débruitée) dans `step_outputs_mnist/`.
+### `vizu_MNIST.py`
+- Propose une **visualisation pas à pas** du reverse process :
+  1. Bruitage d’une (ou plusieurs) image(s) MNIST à l’instant `t`.
+  2. Débruitage itératif en remontant de `t` jusqu’à `0`.
+  3. Calcul/traçage de la **MSE** et de la **SSIM** à chaque étape.
+- Enregistre tous les résultats (images, courbes) dans `step_outputs_mnist/`.
 
-**Lancement** :
+**Exemple d’utilisation** :
 ```bash
 python vizu_MNIST.py
 ```
 
-## Points Clés et Observations
+---
 
-- **Stabilité d’entraînement** : Rapidement (dès ~30–50 époques), la perte MSE descend sous 0.05.
-- **Qualité de reconstruction** : SSIM > 0.98 après ~70–100 époques.
-- **FID / IS** : Pertinents pour juger la distribution globale des échantillons. On obtient FID < 300 et IS ~ 2.5–3.0 avec un U-Net léger.
-- **Limites** : Si le bruit initial est trop élevé (ex. t=999), la reconstruction échoue (MSE ~ 0.47, SSIM < 0.03).
-- **Coût Computationnel** : T=1000 reste coûteux pour générer des images, mais faisable sur un GPU 8 Go.
+## Points Forts et Limites
 
-## Pistes d'Amélioration
-- **Dataset plus riche** : Tester sur CIFAR-10, CelebA.
-- **Architecture plus profonde** : channel_mult=(1,2,2,2), ou plus de blocs résiduels.
-- **Réduction du nombre d’étapes** : Approches type DDIM pour accélérer la génération.
-- **Optimisation** : Mixed Precision (AMP), meilleur scheduler LR.
+- **Simplicité et Rapidité** : Sur MNIST, le U-Net léger converge vite (~30–50 époques) pour des reconstructions de qualité (SSIM>0.98).
+- **Scores Globaux** : FID autour de 220–300 et IS ~2.5–3.0 après ~40–70 époques, selon la taille du batch généré.
+- **Limites** : si le bruit initial est trop élevé (ex. `t=999`), la reconstruction s’effondre (MSE~0.47, SSIM<0.03). Un T=1000 complet est aussi plus coûteux en temps.
+- **Corriger `_reverse_step()`** : Étape cruciale pour éviter les artefacts de type « code QR ».
+
+---
+
+## Pistes d’Évolution
+
+1. **Datasets plus complexes** : CIFAR-10, CelebA, LSUN pour confirmer la robustesse du DDPM.
+2. **Architecture plus large** : augmenter `model_channels`, multiplier les blocs résiduels.
+3. **Réduction de T** : Approches DDIM pour accélérer l’échantillonnage.
+4. **Recherche d’hyperparamètres** : scheduling du LR, Mixed Precision plus poussé, etc.
+
+---
 
 ## Références
-- \textbf{Jonathan Ho}, Ajay Jain, Pieter Abbeel. \emph{Denoising Diffusion Probabilistic Models}. NeurIPS, 2020.
+- Jonathan Ho, Ajay Jain, Pieter Abbeel. *Denoising Diffusion Probabilistic Models*. NeurIPS 2020.
+- [Diffusion Models GitHub (Référence Ho)](https://github.com/hojonathanho/diffusion)
 
+---
+
+_Projet réalisé dans un contexte d’apprentissage génératif : MSE / SSIM / FID / IS illustrent la qualité des reconstructions et la vraisemblance statistique. N’hésitez pas à ouvrir une _issue_ ou proposer un _pull request_ si vous souhaitez contribuer !_
