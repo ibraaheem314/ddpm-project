@@ -1,6 +1,6 @@
 # Projet Génératif avec Diffusion Probabiliste (DDPM) – MNIST
 
-Ce dépôt propose une implémentation d’un modèle de diffusion (Denoising Diffusion Probabilistic Model) pour générer et reconstruire des images MNIST. L’implémentation s’appuie sur l’architecture décrite par Ho et al. (NeurIPS 2020), adaptée aux contraintes matérielles modérées.
+Ce dépôt propose une implémentation d'un modèle de diffusion (Denoising Diffusion Probabilistic Model) pour générer et reconstruire des images MNIST. L'implémentation s'appuie sur l'architecture de Ho et al. (NeurIPS 2020), adaptée à des contraintes matérielles modérées.
 
 ---
 
@@ -13,19 +13,20 @@ Projet_Generatif/
 ├── data/                   # Dossier où MNIST est téléchargé
 │   └── MNIST/
 ├── diffusion.py            # Processus forward (bruit) et reverse (débruitage)
-├── model.py                # Définition d’un U-Net léger (1 canal)
+├── model.py                # Définition d’un U-Net léger (un canal)
 ├── train_MNIST.py          # Script d’entraînement principal
-├── eval_MNIST.py           # Scripts d’évaluation (FID, IS, MSE, SSIM) 
-└── vizu_MNIST.py           # Visualisation approfondie du reverse step
+├── eval_MNIST.py           # Évaluation (FID, IS, MSE, SSIM)
+├── vizu_MNIST.py           # Visualisation détaillée du reverse step
+└── step_outputs_mnist/     # Résultats (images, courbes)
 ```
 
 ## Prérequis
 
-1. **Environnement Python 3.8+** (idéalement).
-2. **GPU CUDA** (8 Go de VRAM recommandé).
-3. **Bibliothèques** : `torch`, `torchvision`, `numpy`, `matplotlib`, `scikit-image`, `torch_fidelity`, `tqdm`.
+1. Environnement Python 3.8 ou plus.
+2. GPU avec CUDA (8 Go de VRAM recommandé).
+3. Bibliothèques : torch, torchvision, numpy, matplotlib, scikit-image, torch_fidelity, tqdm.
 
-Installation express :
+Installation rapide :
 ```bash
 pip install torch torchvision numpy matplotlib scikit-image torch_fidelity tqdm
 ```
@@ -34,47 +35,37 @@ pip install torch torchvision numpy matplotlib scikit-image torch_fidelity tqdm
 
 ## Scripts Principaux
 
-### `model.py`
-- Définit un **U-Net** spécialement conçu pour MNIST (monocanal).
-- Inclus des blocs résiduels (`ResidualBlock`) et éventuellement un bloc d’attention.
-- Paramétrable (nombre de canaux, `channel_mult`, etc.).
+### model.py
+Définit un U-Net adapté à MNIST (monocanal). Inclut des blocs résiduels (ResidualBlock) et éventuellement un bloc d’attention. La taille du modèle peut être ajustée via model_channels ou channel_mult.
 
-### `diffusion.py`
-- Gère la **logique de diffusion** (forward : ajout progressif de bruit) et le **reverse** (débruitage).
-- Utilise la planification de bruitage cosinus (`beta_schedule='cosine'`) et un `_reverse_step` fidèle à la formulation Ho et al.
+### diffusion.py
+Implémente la logique de diffusion (ajout progressif de bruit) et de reverse (débruitage). Utilise un planning de bruitage cosinus (beta_schedule='cosine'), et une fonction _reverse_step conforme à Ho et al.
 
-### `train_MNIST.py`
-- Charge MNIST (train), normalise en `[ -1, 1 ]`.
-- Met en place l’entraînement :
-  - Création d’un U-Net léger.
-  - Boucle sur `T=1000` étapes de diffusion.
-  - Optimiseur AdamW.
-- Sauvegarde des checkpoints dans `checkpoints/`.
+### train_MNIST.py
+Charge MNIST (train), normalise les images en [-1, 1], instancie le modèle U-Net et l’objet Diffusion, puis lance l’entraînement. Les checkpoints sont sauvegardés dans checkpoints/.
 
-**Exemple d’utilisation** :
+Exemple :
 ```bash
 python train_MNIST.py
 ```
 
-### `eval_MNIST.py`
-- Évalue les checkpoints sauvegardés :
-  - Génère un batch d’images via `diffusion.sample(...)`.
-  - Calcule la **FID** et l’**Inception Score** via `torch_fidelity`.
-  - Possibilité de mesurer la **MSE** et la **SSIM** directement.
+### eval_MNIST.py
+Évalue les checkpoints entraînés en générant un lot d’images via diffusion.sample(...), puis calcule les métriques FID et Inception Score avec torch_fidelity. Permet également de mesurer la MSE et la SSIM.
 
-**Exemple d’utilisation** :
+Exemple :
 ```bash
 python eval_MNIST.py
 ```
 
-### `vizu_MNIST.py`
-- Propose une **visualisation pas à pas** du reverse process :
-  1. Bruitage d’une (ou plusieurs) image(s) MNIST à l’instant `t`.
-  2. Débruitage itératif en remontant de `t` jusqu’à `0`.
-  3. Calcul/traçage de la **MSE** et de la **SSIM** à chaque étape.
-- Enregistre tous les résultats (images, courbes) dans `step_outputs_mnist/`.
+### vizu_MNIST.py
+Fournit une visualisation étape par étape du reverse process :
+1. Bruitage d’une image MNIST à un instant t.
+2. Débruitage progressif jusqu’à t=0.
+3. Calcul et traçage de la MSE et de la SSIM à chaque étape.
 
-**Exemple d’utilisation** :
+Enregistre les images et graphes dans step_outputs_mnist/.
+
+Exemple :
 ```bash
 python vizu_MNIST.py
 ```
@@ -83,19 +74,19 @@ python vizu_MNIST.py
 
 ## Points Forts et Limites
 
-- **Simplicité et Rapidité** : Sur MNIST, le U-Net léger converge vite (~30–50 époques) pour des reconstructions de qualité (SSIM>0.98).
-- **Scores Globaux** : FID autour de 220–300 et IS ~2.5–3.0 après ~40–70 époques, selon la taille du batch généré.
-- **Limites** : si le bruit initial est trop élevé (ex. `t=999`), la reconstruction s’effondre (MSE~0.47, SSIM<0.03). Un T=1000 complet est aussi plus coûteux en temps.
-- **Corriger `_reverse_step()`** : Étape cruciale pour éviter les artefacts de type « code QR ».
+- Simplicité et rapidité : le U-Net converge assez vite (~30–50 époques) sur MNIST.
+- Scores globaux : FID autour de 220–300 et IS vers 2.5–3.0 après ~40–70 époques.
+- Limites : si le bruit initial est trop élevé (t=999), la reconstruction échoue (MSE>0.4, SSIM<0.03). T=1000 augmente aussi le coût du sampling.
+- Correction de _reverse_step : indispensable pour éviter des artefacts.
 
 ---
 
 ## Pistes d’Évolution
 
-1. **Datasets plus complexes** : CIFAR-10, CelebA, LSUN pour confirmer la robustesse du DDPM.
-2. **Architecture plus large** : augmenter `model_channels`, multiplier les blocs résiduels.
-3. **Réduction de T** : Approches DDIM pour accélérer l’échantillonnage.
-4. **Recherche d’hyperparamètres** : scheduling du LR, Mixed Precision plus poussé, etc.
+1. Datasets plus complexes (CIFAR-10, CelebA) pour valider la robustesse du DDPM.
+2. Architecture plus large : augmenter model_channels, multiplier les blocs résiduels.
+3. Réduction de T : approches DDIM pour accélérer l’échantillonnage.
+4. Optimisation : scheduling du LR, Mixed Precision (AMP), etc.
 
 ---
 
@@ -105,4 +96,4 @@ python vizu_MNIST.py
 
 ---
 
-_Projet réalisé dans un contexte d’apprentissage génératif : MSE / SSIM / FID / IS illustrent la qualité des reconstructions et la vraisemblance statistique. N’hésitez pas à ouvrir une _issue_ ou proposer un _pull request_ si vous souhaitez contribuer !_
+Projet réalisé dans un contexte d’apprentissage génératif. MSE, SSIM, FID et IS permettent de juger la qualité des reconstructions et de la distribution générée. N’hésitez pas à ouvrir une issue ou proposer une pull request si vous souhaitez contribuer.
